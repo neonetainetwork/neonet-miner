@@ -89,7 +89,7 @@ class LocalBlockchain:
         return len(self.chain)
 
 class AIEngine:
-    """Локальный AI движок для обработки задач"""
+    """Local AI engine for task processing"""
     
     def __init__(self):
         self.model_hash = hashlib.sha256(b"neonet_ai_v1").hexdigest()
@@ -272,10 +272,11 @@ class NeoNetFullNode:
         return round(weights.get(task_type, 0.4) * base_reward, 6)
     
     async def sync_with_bootstrap(self):
-        """Синхронизация с bootstrap сервером"""
+        """Sync with bootstrap server and register as active provider"""
         for server in BOOTSTRAP_SERVERS:
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                    # Get peers
                     async with session.get(f"{server}/api/decentralization/peers") as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -284,6 +285,7 @@ class NeoNetFullNode:
                                 if endpoint:
                                     self.peers.add(endpoint)
                     
+                    # Register
                     payload = {
                         "contributor_id": self.config.wallet,
                         "cpu_cores": self.config.cpu_cores,
@@ -292,14 +294,20 @@ class NeoNetFullNode:
                     }
                     async with session.post(f"{server}/ai-energy/register", json=payload) as resp:
                         if resp.status == 200:
-                            print(f"[OK] Зарегистрирован в bootstrap: {server}")
+                            print(f"[OK] Registered with bootstrap: {server}")
+                    
+                    # Start session (makes provider visible on leaderboard)
+                    session_payload = {"contributor_id": self.config.wallet}
+                    async with session.post(f"{server}/ai-energy/start-session", json=session_payload) as resp:
+                        if resp.status == 200:
+                            print(f"[OK] Session started - now visible on leaderboard")
                             return True
             except Exception as e:
                 continue
         return False
     
     async def fetch_task_from_network(self) -> Optional[dict]:
-        """Получить задачу из сети"""
+        """Get task from network"""
         for server in BOOTSTRAP_SERVERS:
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
@@ -321,7 +329,7 @@ class NeoNetFullNode:
         return self._generate_task()
     
     async def submit_result(self, task_id: str, result: dict, task_type: str) -> float:
-        """Отправить результат в сеть"""
+        """Submit result to network"""
         for server in BOOTSTRAP_SERVERS:
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
@@ -355,32 +363,32 @@ class NeoNetFullNode:
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', self.config.port)
         await site.start()
-        print(f"[NODE] Локальный AI узел запущен на порту {self.config.port}")
+        print(f"[NODE] Local AI node started on port {self.config.port}")
     
     async def run(self):
-        """Главный цикл работы узла"""
+        """Main node operation loop"""
         print("=" * 60)
         print("    NeoNet Full Node - AI Network")  
         print("=" * 60)
-        print(f"Кошелёк: {self.config.wallet}")
-        print(f"Порт: {self.config.port}")
-        print(f"CPU: {self.config.cpu_cores} ядер")
+        print(f"Wallet: {self.config.wallet}")
+        print(f"Port: {self.config.port}")
+        print(f"CPU: {self.config.cpu_cores} cores")
         print("-" * 60)
         
         await self.start_server()
         
         bootstrap_ok = await self.sync_with_bootstrap()
         if bootstrap_ok:
-            print("[NET] Подключен к сети NeoNet")
+            print("[NET] Connected to NeoNet")
         else:
-            print("[NET] Работа в автономном P2P режиме")
+            print("[NET] Running in standalone P2P mode")
         
         self.is_running = True
         self.session_start = time.time()
         sync_counter = 0
         
-        print("\n[AI] Запуск обработки задач...")
-        print("[INFO] Нажмите Ctrl+C для остановки\n")
+        print("\n[AI] Starting task processing...")
+        print("[INFO] Press Ctrl+C to stop\n")
         
         try:
             while self.is_running:
@@ -414,21 +422,21 @@ class NeoNetFullNode:
             self.is_running = False
             uptime = time.time() - self.session_start if self.session_start else 0
             print("\n" + "=" * 60)
-            print("    Итоги сессии")
+            print("    Session Summary")
             print("=" * 60)
-            print(f"Время работы: {int(uptime // 60)} мин {int(uptime % 60)} сек")
-            print(f"Задач обработано: {self.ai.tasks_processed}")
-            print(f"Заработано: {self.rewards_earned:.4f} NNET")
-            print(f"Баланс кошелька: {self.blockchain.get_balance(self.config.wallet):.4f} NNET")
+            print(f"Uptime: {int(uptime // 60)} min {int(uptime % 60)} sec")
+            print(f"Tasks Processed: {self.ai.tasks_processed}")
+            print(f"Total Earned: {self.rewards_earned:.4f} NNET")
+            print(f"Wallet Balance: {self.blockchain.get_balance(self.config.wallet):.4f} NNET")
             print("=" * 60)
 
 
 async def main():
     parser = argparse.ArgumentParser(description="NeoNet Full Node")
-    parser.add_argument("--wallet", required=True, help="Адрес вашего кошелька")
-    parser.add_argument("--port", type=int, default=8080, help="Порт для P2P (по умолчанию 8080)")
-    parser.add_argument("--cpu", type=int, default=4, help="Количество CPU ядер")
-    parser.add_argument("--gpu-mem", type=int, default=0, help="GPU память в МБ")
+    parser.add_argument("--wallet", required=True, help="Your wallet address for NNET rewards")
+    parser.add_argument("--port", type=int, default=8080, help="Port for P2P (default 8080)")
+    parser.add_argument("--cpu", type=int, default=4, help="Number of CPU cores")
+    parser.add_argument("--gpu-mem", type=int, default=0, help="GPU memory in MB")
     
     args = parser.parse_args()
     
