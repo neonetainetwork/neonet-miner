@@ -277,7 +277,7 @@ class NeoNetFullNode:
         for server in BOOTSTRAP_SERVERS:
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                    # Get peers
+                    # Get decentralization status and peers
                     async with session.get(f"{server}/api/decentralization/peers") as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -285,8 +285,15 @@ class NeoNetFullNode:
                                 endpoint = peer.get("endpoint")
                                 if endpoint:
                                     self.peers.add(endpoint)
+                            # Show decentralization progress
+                            phase = data.get("phase", "bootstrap")
+                            replit_load = data.get("replit_load", 100)
+                            miner_load = data.get("miner_load", 0)
+                            if phase != "bootstrap":
+                                print(f"[P2P] Network phase: {phase.upper()}")
+                                print(f"[P2P] Load: Replit {replit_load:.0f}% | Miners {miner_load:.0f}%")
                     
-                    # Register
+                    # Register as energy provider
                     payload = {
                         "contributor_id": self.config.wallet,
                         "cpu_cores": self.config.cpu_cores,
@@ -296,6 +303,22 @@ class NeoNetFullNode:
                     async with session.post(f"{server}/ai-energy/register", json=payload) as resp:
                         if resp.status == 200:
                             print(f"[OK] Registered with bootstrap: {server}")
+                    
+                    # Register capabilities for decentralization
+                    cap_payload = {
+                        "miner_id": self.config.wallet,
+                        "cpu_cores": self.config.cpu_cores,
+                        "gpu_memory_mb": self.config.gpu_memory_mb,
+                        "storage_gb": 100,
+                        "bandwidth_mbps": 50,
+                        "capabilities": ["ai_inference", "consensus_participant"]
+                    }
+                    async with session.post(f"{server}/api/decentralization/register-capability", json=cap_payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            roles = data.get("assigned_roles", [])
+                            if roles:
+                                print(f"[P2P] Assigned roles: {', '.join(roles)}")
                     
                     # Start session (makes provider visible on leaderboard)
                     session_payload = {"contributor_id": self.config.wallet}
