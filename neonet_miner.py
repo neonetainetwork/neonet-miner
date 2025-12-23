@@ -156,7 +156,7 @@ class AIEngine:
         return result
 
 class NeoNetFullNode:
-    """Полный узел NeoNet - AI + Blockchain + P2P"""
+    """Full NeoNet Node - AI + Blockchain + P2P"""
     
     def __init__(self, config: NodeConfig):
         self.config = config
@@ -166,6 +166,7 @@ class NeoNetFullNode:
         self.is_running = False
         self.rewards_earned = 0.0
         self.session_start = None
+        self.session_id = None  # Server session for heartbeats
         
         self.app = web.Application()
         self._setup_routes()
@@ -300,6 +301,8 @@ class NeoNetFullNode:
                     session_payload = {"contributor_id": self.config.wallet}
                     async with session.post(f"{server}/ai-energy/start-session", json=session_payload) as resp:
                         if resp.status == 200:
+                            data = await resp.json()
+                            self.session_id = data.get("session_id")
                             print(f"[OK] Session started - now visible on leaderboard")
                             return True
             except Exception as e:
@@ -336,7 +339,8 @@ class NeoNetFullNode:
                     payload = {
                         "contributor_id": self.config.wallet,
                         "task_id": task_id,
-                        "result": result
+                        "result": result,
+                        "session_id": self.session_id
                     }
                     async with session.post(f"{server}/ai-energy/submit-result", json=payload) as resp:
                         if resp.status == 200:
@@ -347,8 +351,28 @@ class NeoNetFullNode:
         
         return self._calculate_reward(task_type)
     
+    async def send_heartbeat(self) -> float:
+        """Send heartbeat to stay active and earn rewards"""
+        if not self.session_id:
+            return 0
+        
+        for server in BOOTSTRAP_SERVERS:
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                    payload = {
+                        "contributor_id": self.config.wallet,
+                        "session_id": self.session_id
+                    }
+                    async with session.post(f"{server}/ai-energy/heartbeat", json=payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return data.get("reward", 0)
+            except:
+                pass
+        return 0
+    
     async def broadcast_to_peers(self, message_type: str, data: dict):
-        """Отправить сообщение всем пирам"""
+        """Broadcast message to all peers"""
         for peer in list(self.peers):
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as session:
@@ -390,6 +414,7 @@ class NeoNetFullNode:
         print("\n[AI] Starting task processing...")
         print("[INFO] Press Ctrl+C to stop\n")
         
+        heartbeat_counter = 0
         try:
             while self.is_running:
                 task = await self.fetch_task_from_network()
@@ -397,27 +422,36 @@ class NeoNetFullNode:
                 if task and task.get("task_id"):
                     task_id = task["task_id"]
                     task_type = task.get("task_type", "inference")
-                    print(f"[AI] Обработка: {task_type}")
+                    print(f"[AI] Processing: {task_type}")
                     
                     result = self.ai.process_task(task)
-                    print(f"[OK] Выполнено за {result.get('compute_time_ms', 0)}ms")
+                    print(f"[OK] Completed in {result.get('compute_time_ms', 0)}ms")
                     
                     reward = await self.submit_result(task_id, result, task_type)
                     if reward > 0:
                         self.rewards_earned += reward
                         self.blockchain.credit(self.config.wallet, reward)
-                        print(f"[NNET] +{reward:.4f} | Всего: {self.rewards_earned:.4f} NNET")
+                        print(f"[NNET] +{reward:.4f} | Total: {self.rewards_earned:.4f} NNET")
+                
+                # Send heartbeat every 10 iterations (~20 seconds)
+                heartbeat_counter += 1
+                if heartbeat_counter >= 10:
+                    hb_reward = await self.send_heartbeat()
+                    if hb_reward > 0:
+                        self.rewards_earned += hb_reward
+                        self.blockchain.credit(self.config.wallet, hb_reward)
+                    heartbeat_counter = 0
                 
                 sync_counter += 1
                 if sync_counter >= 30:
                     await self.sync_with_bootstrap()
                     sync_counter = 0
-                    print(f"[SYNC] Пиров: {len(self.peers)} | Блокчейн: {self.blockchain.get_height()} блоков")
+                    print(f"[SYNC] Peers: {len(self.peers)} | Blockchain: {self.blockchain.get_height()} blocks | Earned: {self.rewards_earned:.4f} NNET")
                 
                 await asyncio.sleep(2)
                 
         except KeyboardInterrupt:
-            print("\n[STOP] Остановка узла...")
+            print("\n[STOP] Stopping node...")
         finally:
             self.is_running = False
             uptime = time.time() - self.session_start if self.session_start else 0
