@@ -257,6 +257,7 @@ class NeoNetFullNode:
         }
     
     def _calculate_reward(self, task_type: str) -> float:
+        """Dynamic reward based on network size - realistic tokenomics"""
         weights = {
             "federated_learning": 1.0,
             "model_training": 0.8,
@@ -265,8 +266,10 @@ class NeoNetFullNode:
             "gradient_compute": 0.5,
             "inference": 0.4,
         }
+        # BLOCK_BUDGET = 0.1 NNET per block, divided by active nodes
         active_nodes = max(1, len(self.peers) + 1)
-        return weights.get(task_type, 0.4) * (10.0 / active_nodes)
+        base_reward = min(0.05, 0.1 / active_nodes)  # Max 0.05 NNET per task
+        return round(weights.get(task_type, 0.4) * base_reward, 6)
     
     async def sync_with_bootstrap(self):
         """Синхронизация с bootstrap сервером"""
